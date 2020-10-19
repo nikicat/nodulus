@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using DeltaDNA;
+using System;
 using System.Collections.Generic;
 #if UNITY_ANDROID
 using Unity.Notifications.Android;
@@ -12,12 +13,50 @@ namespace View.Control
 	/// </summary>
 	public class GameController : MonoBehaviour
 	{
-        private void RecordEvent(string event, Dictionary<string, object> params)
-        {
-            //DDNA.Instance.RecordEvent (event, params);
-            //DDNA.Instance.Upload();
+        string DictionaryToString(Dictionary < string, object > dictionary) {  
+            string dictionaryString = "{";  
+            foreach(KeyValuePair < string, object > keyValues in dictionary) {  
+                dictionaryString += keyValues.Key + " : " + keyValues.Value + ", ";  
+            }  
+            return dictionaryString.TrimEnd(',', ' ') + "}";  
         }
-	    void Start()
+        float[] Vector3ToFloat(Vector3 vec) {
+            return new float[]{vec.x, vec.y, vec.z};
+        }
+        void RecordEvent(string eventName, Dictionary<string, object> eventParams = null)
+        {
+            Debug.Log("RecordEvent: " + eventName + " eventParams: " + (eventParams != null ? DictionaryToString(eventParams) : null));
+            if (eventParams == null)
+            {
+                DDNA.Instance.RecordEvent (eventName);
+            }
+            else
+            {
+                DDNA.Instance.RecordEvent (eventName, eventParams);
+            }
+            DDNA.Instance.Upload();
+        }
+        Dictionary<string, object> GetInputData() {
+            return new Dictionary<string, object>{
+                ["orientation"] = Input.deviceOrientation,
+                ["compass"] = new Dictionary<string, object>{
+                    ["headingAccuracy"] = Input.compass.headingAccuracy,
+                    ["rawVector"] = Vector3ToFloat(Input.compass.rawVector),
+                    ["timestamp"] = Input.compass.timestamp,
+                    ["magneticHeading"] = Input.compass.magneticHeading,
+                },
+                ["gyro"] = new Dictionary<string, object>{
+                    ["gravity"] = Vector3ToFloat(Input.gyro.gravity),
+                    ["userAcceleration"] = Vector3ToFloat(Input.gyro.userAcceleration),
+                    ["attitude"] = Vector3ToFloat(Input.gyro.attitude.eulerAngles),
+                }
+            };
+        }
+        void Start()
+        {
+            RecordEvent ("start", new Dictionary<string, object>{["input"] = GetInputData()});
+        }
+	    void Awake()
         {
             DDNA.Instance.Settings.BackgroundEventUploadRepeatRateSeconds = 5;
             DDNA.Instance.Settings.BackgroundEventUpload = false;
@@ -26,7 +65,7 @@ namespace View.Control
             DDNA.Instance.ClientVersion = "1.0.0";
             
             DDNA.Instance.StartSDK();
-            RecordEvent ("start");
+            RecordEvent ("awake");
 #if UNITY_ANDROID
             var channel = new AndroidNotificationChannel()
             {
@@ -43,21 +82,31 @@ namespace View.Control
 
             AndroidNotificationCenter.SendNotification(notification, "channel_id");
             AndroidNotificationCenter.OnNotificationReceived += OnNotificationReceived;
+            Input.compass.enabled = true;
+            Input.gyro.enabled = true;
         }
         public void OnNotificationReceived(AndroidNotificationIntentData data)
         {
-            RecordEvent ("notification-received", GetNotificationIntentData(data));
+            RecordEvent ("notification-received", new Dictionary<string, object>{["notification"] = GetNotificationIntentData(data)});
         }
         Dictionary<string, object> GetNotificationIntentData(AndroidNotificationIntentData data)
         {
-            return new Dictionary<string, object>
+            return data == null ? null : new Dictionary<string, object>
             {
-                ["notification-id"] = data.Id,
-                ["notification-channel"] = data.Channel,
-                ["notification-title"] = data.Notification.Title,
-                ["notification-text"] = data.Notification.Text,
-                ["notification-firetime"] = data.Notification.FireTime,
+                ["id"] = data.Id,
+                ["channel"] = data.Channel,
+                ["title"] = data.Notification.Title,
+                ["text"] = data.Notification.Text,
+                ["firetime"] = data.Notification.FireTime,
             };
+        }
+	    void OnApplicationPause(bool pauseStatus)
+        {
+            var data = new Dictionary<string, object>{
+                ["notification"] = GetNotificationIntentData(AndroidNotificationCenter.GetLastNotificationIntent()),
+                ["input"] = GetInputData(),
+            };
+            RecordEvent (pauseStatus ? "pause" : "unpause", data);
 #endif
         }
 		private void Update() 
@@ -69,14 +118,13 @@ namespace View.Control
 				Application.Quit();
 			}
 		}
-	    void OnApplicationPause(bool pauseStatus)
-        {
-            var data = AndroidNotificationCenter.GetLastNotificationIntent();
-            RecordEvent (pauseStatus ? "pause" : "unpause", GetNotificationIntentData(data));
-        }
         void OnApplicationQuit()
         {
             RecordEvent ("quit");
+        }
+        void OnApplicationFocus(bool hasFocus)
+        {
+            RecordEvent (hasFocus ? "focus" : "unfocus");
         }
 	}
 }
